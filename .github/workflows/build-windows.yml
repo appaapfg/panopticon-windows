@@ -15,6 +15,8 @@ jobs:
   build-windows:
     runs-on: windows-latest
     timeout-minutes: 90
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout repository
@@ -118,14 +120,31 @@ jobs:
           if ($exited) { Write-Host "App exited early with code $($p.ExitCode)"; exit 1 }
           Write-Host "App was still running after 45s: startup OK"
 
-      - name: Upload Panopticon
-        uses: actions/upload-artifact@v4
-        with:
-          name: Panopticon-Windows-CPU
-          path: dist/panop/
+      # GitHub's free artifact storage is only ~500 MB, so the build is published as a
+      # Release instead (each file must stay under 2 GB, hence the 1900 MB parts).
+      - name: Package build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          7z a -t7z -mx=3 -v1900m Panopticon-Windows.7z ./dist/panop/*
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem Panopticon-Windows.7z* | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB)}}
+
+      - name: Publish Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "build-${{ github.run_number }}"
+          gh release create $tag --title "Panopticon Windows build ${{ github.run_number }}" `
+            --notes "CPU build. Install 7-Zip, open the .001 file and extract." --prerelease `
+            (Get-ChildItem Panopticon-Windows.7z*).FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload smoke-test logs
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: smoke-logs
