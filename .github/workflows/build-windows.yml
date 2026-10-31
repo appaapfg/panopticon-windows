@@ -1,0 +1,135 @@
+name: Build Panopticon (Windows, CPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      windowed:
+        description: "Hide the console window (leave false while testing)"
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.7"
+          cache: "pip"
+          cache-dependency-path: requirements-windows.txt
+
+      # CPU-only torch first, so nothing later pulls in the CUDA build.
+      - name: Install dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -m pip install --upgrade pip
+          pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-windows.txt
+          pip install pyinstaller==6.16.0 pyinstaller-hooks-contrib==2025.9
+
+      - name: Verify CPU-only environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -c "import torch; print('torch', torch.__version__, 'cuda:', torch.version.cuda); assert torch.version.cuda is None, 'CUDA build of torch was installed'"
+          $nv = pip list | Select-String -Pattern "^nvidia"
+          if ($nv) { Write-Host $nv; throw "nvidia-* packages are installed; they must not be." }
+
+      # Fast failure: if the app's imports are broken we find out in minutes, not after a long build.
+      - name: Import test
+        timeout-minutes: 15
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -u -c "print('IMPORT START', flush=True); import panopticon.my_inference; import panopticon.widgets.device_selector; print('IMPORT COMPLETE', flush=True)"
+
+      - name: Build panop
+        timeout-minutes: 60
+        shell: pwsh
+        run: |
+          $mode = if ("${{ inputs.windowed }}" -eq "true") { "--windowed" } else { "--console" }
+          $piArgs = @("--noconfirm", "--clean", "--onedir", $mode, "--name", "panop")
+
+          # Packages with data files, plugins or DLLs PyInstaller can miss
+          foreach ($p in "ultralytics", "openvino", "onnxruntime", "clip") { $piArgs += @("--collect-all", $p) }
+          # transformers loads its model classes lazily, so PyInstaller cannot see them
+          $piArgs += @("--collect-submodules", "transformers")
+          # plyer picks its Windows notification backend dynamically
+          $piArgs += @("--hidden-import", "plyer.platforms.win.notification")
+          # Libraries check installed package versions at runtime
+          foreach ($m in "transformers", "tokenizers", "safetensors", "huggingface-hub", "tqdm", "regex", "requests",
+                         "packaging", "filelock", "numpy", "pyyaml", "torch", "torchvision", "timm", "accelerate",
+                         "ultralytics", "onnx", "onnxslim", "onnxruntime", "openvino", "opencv-python",
+                         "scipy", "pillow", "matplotlib", "pandas", "psutil", "py-cpuinfo") {
+            $piArgs += @("--copy-metadata", $m)
+          }
+
+          pyinstaller @piArgs pan_opticon.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Stage config files next to the exe
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # config.py looks for these in the working directory first.
+          foreach ($f in "detection_models.yaml", "panopticon_categories.coco.json") {
+            if (-not (Test-Path $f)) { throw "Required file $f not found in repo root" }
+            Copy-Item $f dist/panop/
+          }
+          if (Test-Path "panopticon_settings.yaml") { Copy-Item "panopticon_settings.yaml" dist/panop/ }
+          else { Write-Warning "panopticon_settings.yaml not in repo root; a first-run dialog will appear." }
+          if (Test-Path "images") { Copy-Item -Recurse images dist/panop/images }
+          else { Write-Warning "images/ folder not found; window icon will be missing." }
+
+      - name: Size report
+        shell: pwsh
+        run: |
+          $total = (Get-ChildItem dist/panop -Recurse -File | Measure-Object Length -Sum).Sum / 1MB
+          Write-Host ("Total: {0:N0} MB" -f $total)
+          Get-ChildItem dist/panop/_internal -Directory | ForEach-Object {
+            [pscustomobject]@{ Name = $_.Name; MB = [math]::Round((Get-ChildItem $_.FullName -Recurse -File | Measure-Object Length -Sum).Sum / 1MB) }
+          } | Sort-Object MB -Descending | Select-Object -First 15 | Format-Table -AutoSize
+
+      # Starts the real exe with no display and checks it survives startup (imports, DLLs, config).
+      # It does NOT test detection on a model.
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $p = Start-Process -FilePath "$PWD\dist\panop\panop.exe" -WorkingDirectory "$PWD\dist\panop" `
+                 -PassThru -RedirectStandardOutput smoke_out.txt -RedirectStandardError smoke_err.txt
+          Start-Sleep -Seconds 45
+          $exited = $p.HasExited
+          if (-not $exited) { Stop-Process -Id $p.Id -Force }
+          Get-Content smoke_out.txt, smoke_err.txt -ErrorAction SilentlyContinue
+          if ($exited) { Write-Host "App exited early with code $($p.ExitCode)"; exit 1 }
+          Write-Host "App was still running after 45s: startup OK"
+
+      - name: Upload Panopticon
+        uses: actions/upload-artifact@v4
+        with:
+          name: Panopticon-Windows-CPU
+          path: dist/panop/
+
+      - name: Upload smoke-test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          path: |
+            smoke_out.txt
+            smoke_err.txt
+          if-no-files-found: ignore
