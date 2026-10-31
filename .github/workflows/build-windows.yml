@@ -121,14 +121,14 @@ jobs:
           Write-Host "App was still running after 45s: startup OK"
 
       # GitHub's free artifact storage is only ~500 MB, so the build is published as a
-      # Release instead (each file must stay under 2 GB, hence the 1900 MB parts).
+      # Release instead (each file must stay under 2 GB).
       - name: Package build
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          7z a -t7z -mx=3 -v1900m Panopticon-Windows.7z ./dist/panop/*
+          7z a -tzip -mx=3 Panopticon-Windows.zip ./dist/panop/*
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Get-ChildItem Panopticon-Windows.7z* | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB)}}
+          Get-ChildItem Panopticon-Windows.zip | Select-Object Name, @{n="MB";e={[math]::Round($_.Length/1MB)}}
 
       - name: Publish Release
         shell: pwsh
@@ -138,8 +138,8 @@ jobs:
           $ErrorActionPreference = "Stop"
           $tag = "build-${{ github.run_number }}"
           gh release create $tag --title "Panopticon Windows build ${{ github.run_number }}" `
-            --notes "CPU build. Install 7-Zip, open the .001 file and extract." --prerelease `
-            (Get-ChildItem Panopticon-Windows.7z*).FullName
+            --notes "CPU build. Unzip and run panop.exe." --prerelease `
+            Panopticon-Windows.zip
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload smoke-test logs
