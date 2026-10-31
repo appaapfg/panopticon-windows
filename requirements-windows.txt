@@ -1,0 +1,49 @@
+# Windows (CPU) runtime requirements for Panopticon ONLY.
+# torch / torchvision are NOT listed here: the workflow installs the CPU builds
+# from the PyTorch CPU index first. Do not add nvidia-* or CUDA packages.
+
+# --- GUI / video / drawing ---
+PySide6==6.10.0
+PySide6_Addons==6.10.0
+PySide6_Essentials==6.10.0
+shiboken6==6.10.0
+numpy==2.1.3
+opencv-python==4.12.0.88
+pillow==11.3.0
+supervision==0.26.1
+pycocotools==2.0.10
+PyYAML==6.0.2
+platformdirs==4.5.0
+plyer==2.1.0
+
+# --- Detection (ultralytics + Hugging Face) ---
+ultralytics==8.4.17
+ultralytics-thop==2.0.18
+transformers @ git+https://github.com/huggingface/transformers@bdee0889714e9cb3e53d3b1b2a626919479d356c
+timm @ git+https://github.com/huggingface/pytorch-image-models@625386b96151ec49dede06190b0deaa3909cd4de
+accelerate==1.12.0
+huggingface_hub==1.1.5
+tokenizers==0.22.1
+safetensors==0.6.2
+regex==2025.9.18
+
+# --- YOLOE text prompts ---
+clip @ git+https://github.com/ultralytics/CLIP.git@88ade288431a46233f1556d1e141901b3ef0a36b
+ftfy==6.3.1
+
+# --- CPU inference backends / model export ---
+openvino==2025.3.0
+onnx==1.19.0
+onnxslim==0.1.71
+onnxruntime==1.23.1
+py-cpuinfo==9.0.0
+
+# --- pins for reproducible builds (pulled in by the packages above) ---
+scipy==1.16.2
+matplotlib==3.10.7
+pandas==2.3.3
+polars==1.34.0
+polars-runtime-32==1.34.0
+psutil==7.1.0
+requests==2.32.5
+tqdm==4.67.1
